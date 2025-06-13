@@ -1,99 +1,127 @@
 import java.sql.*;
+import java.util.*;
 
 public class DBConnect {
-    // MySQL 連線資訊
-    private static final String URL = "jdbc:mysql://localhost:3306/程式設計寵物美容院";
+    // MySQL 連線資訊，加上 useSSL、編碼與時區設定
+    private static final String URL = "jdbc:mysql://localhost:3306/程式設計寵物美容院"
+            + "?useSSL=false"
+            + "&useUnicode=true"
+            + "&characterEncoding=UTF-8"
+            + "&serverTimezone=Asia/Taipei";
     private static final String USER = "root";
     private static final String PASSWORD = "ji3cj04au4";
 
     static {
         try {
-            // 載入 MySQL 驅動
             Class.forName("com.mysql.cj.jdbc.Driver");
         } catch (ClassNotFoundException e) {
             throw new RuntimeException("⚠️ 無法載入 MySQL 驅動程式", e);
         }
     }
 
-    /**
-     * 取得資料庫連線
-     *
-     * @return Connection 資料庫連線物件
-     * @throws SQLException 如果連線失敗，拋出 SQLException
-     */
+    /** 取得資料庫連線 */
     public static Connection getConnection() throws SQLException {
         return DriverManager.getConnection(URL, USER, PASSWORD);
     }
 
-    /**
-     * 執行 SELECT 查詢
-     *
-     * @param query  SQL 查詢語句
-     * @param params 可變參數（用於 PreparedStatement）
-     * @return ResultSet 查詢結果
-     */
-    public static ResultSet selectQuery(String query, Object... params) {
-        try {
-            // 連線
-            Connection conn = getConnection(); // Use the new getConnection() method
-            System.out.println("成功連線MySQL！");
-
-            // 下查詢語法
-            PreparedStatement stmt = conn.prepareStatement(query);
-
-            // 執行查詢並回傳
-            return stmt.executeQuery(); // ⚠️ 注意：ResultSet 需要手動關閉
-        } catch (SQLException e) {
-            throw new RuntimeException("⚠️ 查詢失敗：" + e.getMessage(), e);
-        }
+    /** SELECT 查詢並回傳 ResultSet（TableDataHandler 會自己關連線） */
+    public static ResultSet selectQuery(String sql) throws SQLException {
+        Connection conn = getConnection();
+        PreparedStatement stmt = conn.prepareStatement(sql);
+        return stmt.executeQuery();
     }
 
-    /**
-     * 執行 INSERT / UPDATE / DELETE 操作
-     *
-     * @param query  SQL 語句
-     * @param params 可變參數（用於 PreparedStatement）
-     * @return 受影響的行數
-     */
-    public static int executeUpdate(String query, Object... params) {
-        try (Connection conn = getConnection(); // Use the new getConnection() method
-                PreparedStatement stmt = conn.prepareStatement(query)) {
-
-            // 設定參數
+    /** 查詢單筆資料並以 Map 回傳（適合登入驗證等用途） */
+    public static Map<String, String> queryForMap(String sql, Object... params) {
+        try (
+                Connection conn = getConnection();
+                PreparedStatement stmt = conn.prepareStatement(sql)) {
             for (int i = 0; i < params.length; i++) {
                 stmt.setObject(i + 1, params[i]);
             }
+            try (ResultSet rs = stmt.executeQuery()) {
+                ResultSetMetaData meta = rs.getMetaData();
+                int columnCount = meta.getColumnCount();
+                if (rs.next()) {
+                    Map<String, String> result = new HashMap<>();
+                    for (int i = 1; i <= columnCount; i++) {
+                        result.put(meta.getColumnLabel(i), rs.getString(i));
+                    }
+                    return result;
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("⚠️ 單筆查詢失敗：" + e.getMessage(), e);
+        }
+        return null;
+    }
 
+    /** 查詢多筆資料並回傳 List<Map> */
+    public static List<Map<String, String>> queryForList(String sql, Object... params) {
+        List<Map<String, String>> resultList = new ArrayList<>();
+        try (
+                Connection conn = getConnection();
+                PreparedStatement stmt = conn.prepareStatement(sql)) {
+            for (int i = 0; i < params.length; i++) {
+                stmt.setObject(i + 1, params[i]);
+            }
+            try (ResultSet rs = stmt.executeQuery()) {
+                ResultSetMetaData meta = rs.getMetaData();
+                int columnCount = meta.getColumnCount();
+                while (rs.next()) {
+                    Map<String, String> row = new HashMap<>();
+                    for (int i = 1; i <= columnCount; i++) {
+                        row.put(meta.getColumnLabel(i), rs.getString(i));
+                    }
+                    resultList.add(row);
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("⚠️ 多筆查詢失敗：" + e.getMessage(), e);
+        }
+        return resultList;
+    }
+
+    /** 執行 INSERT / UPDATE / DELETE 操作 */
+    public static int executeUpdate(String sql, Object... params) {
+        try (
+                Connection conn = getConnection();
+                PreparedStatement stmt = conn.prepareStatement(sql)) {
+            for (int i = 0; i < params.length; i++) {
+                stmt.setObject(i + 1, params[i]);
+            }
             return stmt.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("⚠️ 資料更新失敗：" + e.getMessage(), e);
         }
     }
 
-    public static void main(String[] args) {
-
-        // 測試 SELECT 查詢
-        try (ResultSet rs = selectQuery("SELECT * FROM customers")) {
-            while (rs.next()) {
-                System.out.println("ID: " + rs.getString("CustomersID") + ", Name: " + rs.getString("CustomersName"));
+    /** 取得某資料表的下一個 ID（MAX + 1） */
+    public static int getNextId(String tableName, String columnName) {
+        String sql = "SELECT MAX(" + columnName + ") FROM " + tableName;
+        try (
+                Connection conn = getConnection();
+                PreparedStatement stmt = conn.prepareStatement(sql);
+                ResultSet rs = stmt.executeQuery()) {
+            if (rs.next()) {
+                return rs.getInt(1) + 1;
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
+        return 1;
+    }
 
-        // 測試 INSERT
-        int insertResult = executeUpdate("INSERT INTO order (idOrders, ProductName) VALUES (?, ?)", "102",
-                "Keyboard");
-        System.out.println("🔹 插入成功，影響行數：" + insertResult);
-
-        // 測試 UPDATE
-        int updateResult = executeUpdate("UPDATE order_v1 SET ProductName = ? WHERE idOrders = ?", "Gaming Keyboard",
-                "102");
-        System.out.println("🔹 更新成功，影響行數：" + updateResult);
-
-        // 測試 DELETE
-        int deleteResult = executeUpdate("DELETE FROM order_v1 WHERE idOrders = ?",
-                "102");
-        System.out.println("🔹 刪除成功，影響行數：" + deleteResult);
+    /** 快速將 JSON 格式的字串解析為 Map（簡單用法） */
+    public static Map<String, String> parseJson(String json) {
+        Map<String, String> map = new HashMap<>();
+        json = json.trim().replaceAll("[{}\"]", "");
+        for (String pair : json.split(",")) {
+            String[] kv = pair.split(":", 2);
+            if (kv.length == 2) {
+                map.put(kv[0].trim(), kv[1].trim());
+            }
+        }
+        return map;
     }
 }
